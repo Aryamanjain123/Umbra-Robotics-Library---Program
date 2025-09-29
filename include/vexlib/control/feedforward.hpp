@@ -98,3 +98,24 @@ public:
     out.kA = det_kA / det;
 
     // Compute simple metrics
+    double y_mean = std::accumulate(u.begin(), u.begin()+n, 0.0) / static_cast<double>(n);
+    double ss_tot = 0.0, ss_res = 0.0;
+    for (std::size_t i=0;i<n;++i) {
+      const double yhat = out.kS * sgn(v[i]) + out.kV * v[i] + out.kA * a[i];
+      const double err  = u[i] - yhat;
+      ss_res += err*err;
+      const double dy = u[i] - y_mean;
+      ss_tot += dy*dy;
+    }
+    out.rmse = std::sqrt(ss_res / static_cast<double>(n));
+    out.r2   = (ss_tot <= 1e-12) ? 1.0 : (1.0 - ss_res / ss_tot);
+    return out;
+  }
+
+private:
+  double kS_{0.0}, kV_{0.0}, kA_{0.0};
+  double sign_eps_{0.0};
+};
+
+} // namespace control
+} // namespace vexlib
