@@ -89,7 +89,36 @@ class Chassis {
     false,   // invert left
     false,   // invert right
     false    // invert lateral
+  }
+  void setTelemetryBuffer(telemetry::TelemetryBuffer* buf) { telemBuf_ = buf; }
+  void setCSVLogger(telemetry::CSVLogger* log) { logger_ = log; }
+
+  void update(double dt_sec) {
+    odom_.update(dt_sec);
+
+    if (telemBuf_ || logger_) {
+      telemetry::Sample s;
+      s.t_sec = Brain.Timer.time(sec);
+      auto p = getPose();
+      s.x_m = p.x_m;
+      s.y_m = p.y_m;
+      s.theta_rad = p.theta_rad;
+      if (telemBuf_) telemBuf_->push(s);
+      if (logger_) logger_->log(s);
+    }
+  }
+
+ private:
+  TankChassis tank_;
+  localization::Odometry3W odom_;
+  localization::Odometry3W::Geometry geom_{
+    0.300,0.100,0.028,360,false,false,false
   };
+
+  telemetry::TelemetryBuffer* telemBuf_{nullptr};
+  telemetry::CSVLogger* logger_{nullptr};
+
+};
 };
 
 }  // namespace vexlib::drive
