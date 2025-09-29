@@ -2,11 +2,18 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+
 #include "vexlib/hal/motor.hpp"
+#include "vexlib/hal/rotation.hpp"
+#include "vexlib/hal/imu.hpp"
+#include "vexlib/localization/odometry3w.hpp"
+#include "vexlib/localization/pose2d.hpp"
 
 namespace vexlib::drive {
 
-// Simple 2-motor tank / 4-motor tank via motor groups
+// ----------------------------------------------------------------------
+// Low-level tank chassis (2-motor / 4-motor via motor groups)
+// ----------------------------------------------------------------------
 class TankChassis {
  public:
   // Provide left/right motors (they can be plugged into a motor group externally if desired)
@@ -36,6 +43,53 @@ class TankChassis {
   hal::Motor& left_;
   hal::Motor& right_;
   double maxV_;
+};
+
+// ----------------------------------------------------------------------
+// High-level competition chassis with Odometry++
+// ----------------------------------------------------------------------
+class Chassis {
+ public:
+  Chassis(hal::Motor& leftMotor,
+          hal::Motor& rightMotor,
+          hal::Rotation& leftOdom,
+          hal::Rotation& rightOdom,
+          hal::Rotation& lateralOdom,
+          hal::IMU& imu)
+      : tank_(leftMotor, rightMotor),
+        odom_(geom_, leftOdom, rightOdom, lateralOdom, imu) {
+    odom_.initialize();
+  }
+
+  // ---------------- Drive passthroughs ----------------
+  void arcade(double fwd, double turn) { tank_.arcade(fwd, turn); }
+  void curvature(double fwd, double curv, bool quick) { tank_.curvature(fwd, curv, quick); }
+  void brake(hal::BrakeMode mode) { tank_.brake(mode); }
+
+  // ---------------- Odometry passthroughs ----------------
+  localization::Pose2D getPose() const { return odom_.pose(); }
+  void resetPose(const localization::Pose2D& p) { odom_.resetPose(p); }
+  void fuseAbsolutePose(const localization::Pose2D& p, double posStd, double yawStd) {
+    odom_.fuseAbsolutePose(p, posStd, yawStd);
+  }
+
+  // Call this every 10–20 ms in your main loop
+  void update(double dt_sec) { odom_.update(dt_sec); }
+
+ private:
+  TankChassis tank_;
+  localization::Odometry3W odom_;
+
+  // Geometry constants (tune these for your robot!)
+  localization::Odometry3W::Geometry geom_{
+    0.300,   // track width (m)
+    0.100,   // lateral offset (m)
+    0.028,   // tracking wheel radius (m)
+    360,     // ticks per revolution
+    false,   // invert left
+    false,   // invert right
+    false    // invert lateral
+  };
 };
 
 }  // namespace vexlib::drive
