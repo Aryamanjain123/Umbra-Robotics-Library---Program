@@ -1,54 +1,67 @@
-// If you're compiling on the robot with PROS, this file becomes your entry point.
-// You can merge parts of this into an existing project as needed.
+#include "vex.h"
 
-#if __has_include("pros/apix.h")
-#include "pros/apix.h"
-#include "pros/rtos.hpp"
+// Core drive & odometry
 #include "vexlib/drive/chassis.hpp"
-#include "vexlib/hal/imu.hpp"
-#include "vexlib/hal/motor.hpp"
-#include "vexlib/logger.hpp"
-#include "vexlib/controller/controller.hpp"
+#include "vexlib/localization/pose2d.hpp"
 
-vexlib::hal::Motor leftMotor(1, false, 200.0);
-vexlib::hal::Motor rightMotor(2, true, 200.0);
-vexlib::drive::TankChassis chassis(leftMotor, rightMotor);
-vexlib::hal::IMU imu(3);
-vexlib::io::Controller master;
+// Telemetry (optional)
+#include "vexlib/telemetry/telemetry.hpp"
 
-void initialize() {
-  vexlib::Logger::set_level(vexlib::LogLevel::kInfo);
-  vexlib::Logger::log(vexlib::LogLevel::kInfo, "init", "vexlib %s initializing...", vexlib::VERSION);
-  imu.reset();
-}
+using namespace vex;
+using namespace vexlib;
 
-void disabled() {}
-
-void competition_initialize() {}
-
-void autonomous() {
-  // Simple demo: drive forward for 1s
-  auto t0 = pros::millis();
-  while (pros::millis() - t0 < 1000) {
-    chassis.arcade(0.5, 0.0);
-    pros::delay(10);
-  }
-  chassis.arcade(0.0, 0.0);
-}
-
-void opcontrol() {
-  while (true) {
-    double fwd = -master.left_y();     // invert so up is positive
-    double turn = master.right_x();
-    bool quick = master.button_a();
-    chassis.curvature(fwd, turn, quick);
-    pros::delay(10);
-  }
-}
-
-#else
 int main() {
-  // Host build (no PROS). Nothing to do here; run unit tests instead.
-  return 0;
+  vexcodeInit();
+
+  // -----------------------------
+  // 1. Hardware setup (user wires their ports)
+  // -----------------------------
+  hal::Motor leftMotor(PORT1, false);     // left drive motor
+  hal::Motor rightMotor(PORT10, true);    // right drive motor
+  hal::Rotation leftOdom(PORT2);          // left tracking wheel
+  hal::Rotation rightOdom(PORT3);         // right tracking wheel
+  hal::Rotation lateralOdom(PORT4);       // lateral tracking wheel
+  hal::IMU imu(PORT5);                    // IMU
+
+  // -----------------------------
+  // 2. High-level chassis
+  // -----------------------------
+  drive::Chassis chassis(leftMotor, rightMotor,
+                         leftOdom, rightOdom, lateralOdom, imu);
+
+  // Reset pose to field origin
+  chassis.resetPose(localization::Pose2D{0.0, 0.0, 0.0});
+
+  // -----------------------------
+  // 3. Telemetry setup (optional)
+  // -----------------------------
+  telemetry::TelemetryBuffer buf;
+  telemetry::CSVLogger logger;
+  logger.open("auton.csv");                // will save to SD card if present
+  chassis.setTelemetryBuffer(&buf);
+  chassis.setCSVLogger(&logger);
+
+  // -----------------------------
+  // 4. Autonomous routine
+  // -----------------------------
+  chassis.driveTo(24_in);                  // drive forward 24"
+  chassis.turnTo(90_deg);                  // turn 90°
+  chassis.driveToPose(36_in, 24_in, 0_deg);// drive to a field pose
+
+  // Close log file (important!)
+  logger.close();
+
+  // -----------------------------
+  // 5. Background loop
+  // -----------------------------
+  while (true) {
+    chassis.update(0.02);  // update odometry & telemetry every 20ms
+
+    // Print live pose to screen
+    auto p = chassis.getPose();
+    Brain.Screen.printAt(10, 40, "x=%.2f y=%.2f th=%.1f",
+                         p.x_m, p.y_m, localization::Pose2D::rad2deg(p.theta_rad));
+
+    this_thread::sleep_for(20);
+  }
 }
-#endif
