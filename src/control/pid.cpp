@@ -6,20 +6,24 @@ namespace control {
 
 PID::PID(const PIDConfig& cfg) : cfg_(cfg) { reset(0.0); }
 
-void PID::setTarget(double setpoint, double feedforward_hint) {
+void PID::setTarget(double setpoint) {
   target_ = setpoint;
-  ff_hint_ = feedforward_hint;
-  // Do not reset integral/derivative automatically; caller controls reset()
+}
+
+void PID::setFFState(double desired_vel, double desired_accel) {
+  ff_vel_  = desired_vel;
+  ff_acc_  = desired_accel;
 }
 
 void PID::reset(double measured) {
   last_meas_ = measured * cfg_.meas_sign;
-  double err = (target_ - last_meas_);
+  const double err = (target_ - last_meas_);
   last_err_ = err;
   last_err_d_raw_ = 0.0;
   last_err_d_filt_ = 0.0;
   integ_ = 0.0;
   last_out_ = 0.0;
+  last_ff_ = 0.0;
   elapsed_ms_ = 0;
   inband_ms_ = 0;
   settled_ = false;
@@ -83,29 +87,30 @@ double PID::update(double measured, double dt_s) {
     integ_ += err * dt_s;
   }
 
-  // Compute raw PID
+  // Compute PID (no FF yet)
   const double P = cfg_.gains.kp * err;
   const double I = cfg_.gains.ki * integ_;
   const double D = cfg_.gains.kd * last_err_d_filt_;
-  double u_raw = (P + I + D);
+  double u_pid = (P + I + D);
 
-  // Phase 2 placeholder (feedforward & hint); currently ignored in output sum
-  (void)ff_hint_;
+  // Feedforward contribution using desired kinematics
+  double u_ff = 0.0;
+  if (cfg_.ff_enabled) {
+    const double s = sign_smooth(ff_vel_, cfg_.ff_sign_epsilon);
+    u_ff = cfg_.gains.kS * s + cfg_.gains.kV * ff_vel_ + cfg_.gains.kA * ff_acc_;
+  }
+  last_ff_ = u_ff;
 
-  // Pre-saturation output sign
-  u_raw *= cfg_.out_sign;
+  // Combine, apply output sign, then saturate
+  double u_raw = (u_pid + u_ff) * cfg_.out_sign;
 
-  // Saturation
   const double u_sat = clamp(u_raw, cfg_.limits.out_min, cfg_.limits.out_max);
 
   // Anti-windup
   if (cfg_.anti_windup == AntiWindupMode::Clamp) {
-    // Clamp integral term directly to keep ki*I within effect
     integ_ = clamp(integ_, cfg_.limits.i_min, cfg_.limits.i_max);
   } else {
-    // Back-calculation: correct integral with saturation error
-    // I += beta * (u_sat - u_raw) / max(ki, eps)
-    const double beta = 1.0; // can expose if needed
+    const double beta = 1.0; // could be exposed if needed
     const double eps = 1e-9;
     const double ki = std::max(std::fabs(cfg_.gains.ki), eps);
     const double correction = beta * (u_sat - u_raw) / ki;
